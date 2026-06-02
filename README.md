@@ -6,3 +6,5 @@
 </p>
 
 Official implementation for ***AFUN: Towards an Affordance Foundation Model for Functionality Understanding***.
+
+Code coming soon
