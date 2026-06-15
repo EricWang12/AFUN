@@ -1,0 +1,47 @@
+# configs/model/decoder/sam3_decoder.yaml
+_target_: src.models.decoder.sam3_decoder.Sam3Decoder
+freeze: false
+training: true
+# Optional: checkpoint containing the Qwen->SAM3 projector (same style as qwen_to_sam_metaquery.py).
+# If null, you must set `model_cfg.projector_in_dim`.
+ckpt_path: null
+
+predict_motion: false
+defaults:
+  - _self_
+  # group: motion/, option: motion_processor.yaml, packaged under key "motion_processor"
+  - motion@motion_processor: fsframe_processor
+
+# Depth geo encoder (frozen DFormerv2 + trainable projection)
+# Set to null to disable depth-aware motion processing
+# variant: S (Small, 27M), B (Base, 54M), L (Large, 96M)
+# Weights auto-download from HuggingFace if pretrained_path is missing
+depth_encoder:
+  _target_: src.models.decoder.motion_decoder.depth_geo_encoder.DFormerV2GeoEncoder
+  pretrained_path: ""
+  out_dim: 256
+  feature_stage: 2  # 1/16 scale
+  variant: "B"
+  max_depth: 10000.0  # depth clamp ceiling in dataset units (10000mm = 10m for mm-scale datasets)
+
+model_cfg:
+  device: cuda
+  # Projector dims: only needed when ckpt_path is null
+  projector_in_dim: 4096
+  projector_out_dim: 256
+
+  # SAM3 loading
+  sam3_checkpoint_path: null
+  sam3_load_from_hf: true
+  enable_segmentation: true
+  enable_inst_interactivity: false
+  compile: false
+
+  # Output behavior
+  return_dict: true          # default: return (B,1,H,W) logits tensor
+  confidence_threshold: 0.5
+  metric_keys: ["miou_semantic_seg", "presence_acc", "ce_f1", "presence_dec_acc", "motion_loss", "sam3_loss"]
+
+# Training loss — null for inference (never computed without targets; avoids the
+# sam3.train.loss chain and its torchmetrics dependency).
+loss: null

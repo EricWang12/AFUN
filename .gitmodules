@@ -1,0 +1,3 @@
+[submodule "src/models/decoder/sam3"]
+	path = src/models/decoder/sam3
+	url = https://github.com/EricWang12/sam3.git

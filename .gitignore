@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.mypy_cache/
+.ruff_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg
+.eggs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Demo output (do NOT track; users generate locally)
+outputs/
+
+# Misc cache
+.hydra/
+multirun/
+
+# Local Claude Code session settings
+.claude/
+archive/
+
+# Local docs / planning notes (kept on disk, not tracked)
+docs/
+
+# Large model weights — kept on disk, not in git (too big to push)
+checkpoints/
+*.pt

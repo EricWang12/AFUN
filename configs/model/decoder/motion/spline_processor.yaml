@@ -1,0 +1,26 @@
+# configs/model/decoder/motion/motion_processor.yaml
+
+_target_: src.models.decoder.motion_decoder.spline_processor.SplineProcessor
+
+model_cfg:
+  q_dim: 256
+  kv_dim: 4096
+  num_layers: 4       # set 4 or 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  attn_dropout: 0.0
+  head_hidden: 256
+  # Number of predicted Bezier control points (P0 is implicit at origin).
+  # output_dim = 3 * num_predicted_ctrl. Default 3 = cubic Bezier (output_dim=9).
+  num_predicted_ctrl: 3
+  # Geo cross-attention (depth-aware motion)
+  geo_dim: 256
+  enable_geo: true
+  use_mask_bias: true
+  
+loss_cfg:
+  reduction: mean
+  weight: 1000.0
+  curve_T: 16
+

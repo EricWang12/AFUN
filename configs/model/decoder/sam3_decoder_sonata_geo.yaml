@@ -1,0 +1,23 @@
+# configs/model/decoder/sam3_decoder_sonata_geo.yaml
+#
+# Drop-in replacement for sam3_decoder.yaml that swaps the DFormerv2 depth
+# encoder for a frozen Sonata (PointTransformerV3) encoder. All other
+# sam3_decoder fields are inherited.
+
+defaults:
+  - sam3_decoder
+  - _self_
+
+depth_encoder:
+  _target_: src.models.decoder.motion_decoder.sonata_geo_encoder.SonataGeoEncoder
+  ckpt_path: facebook/sonata
+  out_dim: 256
+  geo_spatial_shape: [30, 40]
+  grid_size: 0.02
+  upcast_levels: 1
+  enable_fourier_encode: true
+  max_depth: 10000.0
+  min_valid_points: 64
+  # Robot dataset depth is in mm; scale to meters so Sonata's grid_size=0.02m voxelization is correct.
+  # For depth already in meters, set depth_scale: 1.0.
+  depth_scale: 0.001

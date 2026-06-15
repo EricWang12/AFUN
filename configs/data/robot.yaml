@@ -1,0 +1,9 @@
+# @package data
+# Stub — the inference path never instantiates a dataset/dataloader.
+# Kept only because the chosen config's `defaults:` chain composes it.
+data_dir: null
+subset: null
+split_file: null
+split: ""
+dataset_cfg: {}
+loader_cfg: {}

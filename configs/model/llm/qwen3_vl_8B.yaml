@@ -1,0 +1,23 @@
+_target_: src.models.llm.qwen_wrapper.QwenWrapper
+model_name:  "Qwen/Qwen3-VL-8B-Instruct"
+llm_cfg:
+  # system_prompt: "You will be given an image or its caption. Please describe the content of the image in detail in your own words."
+  system_prompt: null
+  max_input_text_tokens: 256
+  rms_norm: true
+  skip_lm_head: true  # set true to skip lm_head and use norm hook instead (saves ~14 GB)
+
+ft_cfg:
+  num_point_tokens: 0
+
+  metaquery_cfg:
+    num_metaqueries: 32                       # num_metaqueries for each type, will be multiplied by the number of types
+    metaquery_types: ["semantic", "motion"]
+
+  lora_cfg:
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    lora_trainable: true
+    lora_bias: "none"
+    lora_scaling: 1.0

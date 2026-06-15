@@ -1,0 +1,55 @@
+# AFUN inference config — the single config used by demo.py and run_examples.py.
+#
+# Consolidates the former p0.84-robot-eval-motion{,-val}.yaml (Sonata
+# PointTransformerV3 depth encoder + spline motion head). The two only differed
+# by data.split, which the inference path never reads (it never instantiates a
+# dataset/dataloader), so a single config covers both.
+#
+# No `paths`/`cluster` dependency: inference resolves outputs via the scripts'
+# --out flag, and data_dir is a stub.
+
+defaults:
+  - model/decoder@decoder: sam3_decoder_sonata_geo
+  - model/llm@llm: qwen3_vl_8B
+  - data: robot
+  - train: trainer_sam
+  - override model/decoder/motion@decoder.motion_processor: spline_processor
+  - _self_
+
+_target_: src.models.end_to_end.EndToEndModel
+
+model_name: "afun-inference"
+
+decoder_input_dim: 4096
+llm_input_dim: 4096
+
+train:
+  batch_size: 1
+  lr: 2e-4
+  grad_accumulation_steps: 1
+  ckpt_path: null
+  use_wandb: false
+
+  training_cfg:
+    save_ckpt_every: 99999
+    log_every_step: 100
+
+decoder:
+  predict_motion: true
+  model_cfg:
+    freeze_sam: true
+    confidence_threshold: 0.0
+    sam_loss_weight: 0.01
+
+data:
+  data_dir: null
+  subset: null
+  split: test
+  split_file: null
+  dataset_cfg:
+    motion_type: "curve_samples"
+    traj_file_name: "trajectory.json"
+    fit_quality_threshold: null
+    curve_T: 16
+
+rms_norm: false
