@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://arxiv.org/abs/2606.02551"><img src="https://img.shields.io/badge/arXiv-2606.02551-b31b1b.svg?logo=arxiv&logoColor=white" alt="arXiv"></a>
   <a href="https://www.zhaoningwang.com/AFUN/"><img src="https://img.shields.io/badge/Project-Page-1f8acb.svg?logo=googlechrome&logoColor=white" alt="Project Page"></a>
+  <a href="https://huggingface.co/AFUN-dataset"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Datasets-ffd21e.svg" alt="Hugging Face Datasets"></a>
 </p>
 <p align="center"><img src="assets/afun_teaser.png" width="95%"></p>
 
@@ -39,6 +40,7 @@ your own images. Depth is handled automatically — [Depth-Anything-3](https://g
 - [📋 TODO](#-todo)
 - [🔧 Installation](#-installation)
 - [🚀 Quick Start](#-quick-start)
+- [📦 Dataset & Benchmark](#-dataset--benchmark)
 - [🙏 Acknowledgements](#-acknowledgements)
 - [📚 Citation](#-citation)
 
@@ -50,7 +52,7 @@ your own images. Depth is handled automatically — [Depth-Anything-3](https://g
 
 - [x] Inference code &amp; demo 
 - [ ] **Training Code**
-- [ ] **Dataset, Evaluation, and Benchmark** 
+- [x] **Dataset, Evaluation, and Benchmark** — see [📦 Dataset & Benchmark](#-dataset--benchmark)
 - [ ] **Robot Demonstration Code**
 - [ ] **Claude Agent md Files** 
 
@@ -138,6 +140,28 @@ python demo.py --rgb examples/kitchen_fridge/rgb.png --query "Open the refrigera
 python run_examples.py            # add --no-3d to skip the interactive 3D HTML
 ```
 
+
+## 📦 Dataset & Benchmark
+
+All data is released on Hugging Face under the [**AFUN-dataset**](https://huggingface.co/AFUN-dataset)
+organization (CC BY-NC-SA 4.0). Each data point is one folder: an RGB frame, its metric depth map,
+the ground-truth affordance mask, the ground-truth 3D motion curve, and a language instruction.
+
+| Dataset | What it is | Size |
+|---|---|---:|
+| [**AFUN**](https://huggingface.co/datasets/AFUN-dataset/AFUN) | Training set — **44,749** data points from SceneFun3D, RoboMIND, DROID, AgiBot World, RH20T, CALVIN, RLBench and VITRA human videos | 231 GiB |
+| [**AFUN_eval**](https://huggingface.co/datasets/AFUN-dataset/AFUN_eval) | The three evaluation sets of Table 3 — `afun_test` (121), `scenefun3d_test` (721), `robomind2_test` (156) — with the ADE / FDE / CIM protocol described in its README | 9.9 GiB |
+| [**AFUN_pool**](https://huggingface.co/datasets/AFUN-dataset/AFUN_pool) | The full **183,657**-point pool (Table 7) that AFUN was curated from. Its 106,225 Ego4D-derived points ship as annotations only, with a script that rebuilds the frames from your own Ego4D download | 363 GiB |
+
+```bash
+pip install -U huggingface_hub
+hf download AFUN-dataset/AFUN_eval --repo-type dataset --local-dir afun_eval    # 9.9 GiB — start here
+hf download AFUN-dataset/AFUN      --repo-type dataset --local-dir afun_train   # 231 GiB
+```
+
+Each dataset's README documents the folder layout, the `trajectory.json` schema, and a loading snippet.
+
+---
 
 ## 🙏 Acknowledgements
 
