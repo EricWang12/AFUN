@@ -149,9 +149,9 @@ the ground-truth affordance mask, the ground-truth 3D motion curve, and a langua
 
 | Dataset | What it is | Size |
 |---|---|---:|
-| [**AFUN**](https://huggingface.co/datasets/AFUN-dataset/AFUN) | Training set — **44,749** data points from SceneFun3D, RoboMIND, DROID, AgiBot World, RH20T, CALVIN, RLBench and VITRA human videos | 231 GiB |
-| [**AFUN_eval**](https://huggingface.co/datasets/AFUN-dataset/AFUN_eval) | The three evaluation sets of Table 3 — `afun_test` (121), `scenefun3d_test` (721), `robomind2_test` (156) — with the ADE / FDE / CIM protocol described in its README | 9.9 GiB |
-| [**AFUN_pool**](https://huggingface.co/datasets/AFUN-dataset/AFUN_pool) | The full **183,657**-point pool (Table 7) that AFUN was curated from. Its 106,225 Ego4D-derived points ship as annotations only, with a script that rebuilds the frames from your own Ego4D download | 363 GiB |
+| [**AFUN**](https://huggingface.co/datasets/AFUN-dataset/AFUN) | Training set: **44,749** data points from SceneFun3D, RoboMIND, DROID, AgiBot World, RH20T, CALVIN, RLBench and VITRA human videos | 231 GiB |
+| [**AFUN_eval**](https://huggingface.co/datasets/AFUN-dataset/AFUN_eval) | The three evaluation sets of Table 3: `afun_test` (121), `scenefun3d_test` (721), `robomind2_test` (156). The ADE / FDE / CIM protocol is described in its README | 9.9 GiB |
+| [**AFUN_pool**](https://huggingface.co/datasets/AFUN-dataset/AFUN_pool) | The full **183,657**-point pool that [**AFUN**](https://huggingface.co/datasets/AFUN-dataset/AFUN) was curated from. Its 106,225 Ego4D-derived points ship as annotations only, with a script that rebuilds the frames from your own Ego4D download | 363 GiB |
 
 ```bash
 pip install -U huggingface_hub
