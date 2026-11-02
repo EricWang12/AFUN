@@ -1,0 +1,18 @@
+# @package data
+_target_: src.data.reasonaff.ReasonAFFDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+
+data_dir: "${paths.data_roots.reasonaff}"
+split: train
+split_root: null
+query_field: problem
+query_style: raw
+cache: false
+strict: false
+
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008
+    normalize_image: true

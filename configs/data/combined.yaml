@@ -1,0 +1,19 @@
+# @package data
+_target_: src.data.combined.CombinedDataModule
+_recursive_: false
+defaults:
+  - multi_source@segmentation
+  - robot@robot
+  - _self_
+mixing:
+  weights:
+    segmentation: 1
+    robot: 1
+  fixed_steps: 200
+  seed: ${seed}
+  max_total_workers: 8
+segmentation:
+  mixing:
+    # Stage 3 draws segmentation batches in proportion to dataset size; the
+    # hova500k weight in multi_source.yaml applies to Stage 2 only.
+    fixed_steps: 0

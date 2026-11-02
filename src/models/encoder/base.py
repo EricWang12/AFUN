@@ -1,7 +1,7 @@
 # src/models/encoder/base.py
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Optional
 import torch
 from torch import nn
 from ..model_base import ModelBase
@@ -14,10 +14,6 @@ class EncoderBase(ModelBase, ABC):
         super().__init__(freeze)
         self.apply_freeze()
     
-    # """Raw input -> continuous features."""
-    # @abstractmethod
-    # def encode(self, raw: Any, **kwargs) -> torch.Tensor:
-    #     raise NotImplementedError("Subclasses must implement encode")
 
     @abstractmethod
     def load_model(self, ckpt_path: str = None, device: str = "cuda", **kwargs):

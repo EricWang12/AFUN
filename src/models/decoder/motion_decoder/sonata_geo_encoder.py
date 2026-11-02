@@ -113,7 +113,7 @@ class SonataGeoEncoder(nn.Module):
         max_depth: float = 10000.0,
         min_valid_points: int = 64,
         depth_scale: float = 1.0,  # multiply depth by this to reach meters (0.001 for mm-scale datasets like robot)
-        **_ignored,  # absorbs DFormer-only keys leaked by Hydra dict-merge (e.g. pretrained_path, feature_stage, variant)
+        **_ignored,  # tolerate extra keys from user configs
     ) -> None:
         super().__init__()
         # Deferred imports — keeps helper-only tests cheap.

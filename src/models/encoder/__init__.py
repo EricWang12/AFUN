@@ -1,2 +1,1 @@
-# encoder package
-from .base import EncoderBase
+from .base import EncoderBase as EncoderBase

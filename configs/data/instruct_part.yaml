@@ -1,0 +1,15 @@
+# @package data
+_target_: src.data.instruct_part.InstructPartDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+
+data_dir: "${paths.data_roots.instruct_part}"
+split: train1800
+
+strict: true
+
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008
+    normalize_image: true

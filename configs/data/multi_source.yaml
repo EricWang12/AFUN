@@ -1,0 +1,15 @@
+# @package data
+_target_: src.data.seg_multi_source.SegMultiSourceDataModule
+_recursive_: false
+defaults:
+  - instruct_part@datasets.instruct_part
+  - ragnet@datasets.ragnet
+  - hova500k@datasets.hova500k
+  - reasonaff@datasets.reasonaff
+  - _self_
+mixing:
+  weights:
+    hova500k: 50000
+  fixed_steps: 200
+  seed: ${seed}
+  max_total_workers: 8

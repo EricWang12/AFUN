@@ -1,0 +1,16 @@
+# @package train
+_target_: src.train.trainer.Trainer
+batch_size: 2
+lr: 2.0e-4
+use_wandb: false
+grad_accumulation_steps: 1
+ckpt_path: null       # Initialize weights; reset optimizer and step.
+resume_path: null     # Resume weights, optimizer, and step; overrides ckpt_path.
+training_cfg:
+  max_steps: 20000
+  save_ckpt_every: 1000
+  save_best_every_epoch: 0
+  log_every_step: 25
+  grad_clip: 1.0
+  gradient_checkpointing: true
+  rolling_ckpt: false

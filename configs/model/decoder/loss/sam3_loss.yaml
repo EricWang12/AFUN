@@ -1,0 +1,60 @@
+# SAM3 grounding loss (Hungarian matching + box/mask/presence terms).
+#
+# Training-only. `sam3_decoder.yaml` defaults to `loss: null` so the inference
+# path never imports `sam3.train.loss` (and so never needs torchmetrics); a
+# training config opts in with:
+#     - model/decoder/loss@decoder.loss: sam3_loss
+_target_: sam3.train.loss.sam3_loss.Sam3LossWrapper
+normalization: local  # "global" does dist.all_reduce on the num_boxes scalar -> NCCL hang after hours of training
+matcher:
+  _target_: sam3.train.matcher.BinaryHungarianMatcherV2
+  focal: true  # with `focal: true` it is equivalent to BinaryFocalHungarianMatcher
+  cost_class: 2.0
+  cost_bbox: 5.0
+  cost_giou: 2.0
+  alpha: 0.25
+  gamma: 2
+  stable: False
+o2m_matcher:
+  _target_: sam3.train.matcher.BinaryOneToManyMatcher
+  alpha: 0.3
+  threshold: 0.4
+  topk: 4
+use_o2m_matcher_on_o2m_aux: false
+loss_fns_find:
+  - _target_: sam3.train.loss.loss_fns.Boxes
+    weight_dict:
+      loss_bbox: 5.0
+      loss_giou: 2.0
+  - _target_: sam3.train.loss.loss_fns.IABCEMdetr
+    weak_loss: False
+    weight_dict:
+      loss_ce: 20.0
+      presence_loss: 20.0
+    pos_weight: 10.0
+    alpha: 0.25
+    gamma: 2
+    use_presence: True
+    pos_focal: false
+    pad_n_queries: 200
+    pad_scale_pos: 1.0
+  - _target_: sam3.train.loss.loss_fns.Masks
+    focal_alpha: 0.25
+    focal_gamma: 2.0
+    weight_dict:
+      loss_mask: 200.0
+      loss_dice: 10.0
+    compute_aux: false
+loss_fn_semantic_seg:
+  _target_: sam3.train.loss.loss_fns.SemanticSegCriterion
+  presence_head: True
+  presence_loss: False
+  focal: True
+  focal_alpha: 0.6
+  focal_gamma: 2.0
+  downsample: False
+  weight_dict:
+    loss_semantic_seg: 20.0
+    loss_semantic_presence: 1.0
+    loss_semantic_dice: 30.0
+scale_by_find_batch_size: True

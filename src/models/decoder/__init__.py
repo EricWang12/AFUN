@@ -1,2 +1,1 @@
-# decoder package
-from .base import DecoderBase
+from .base import DecoderBase as DecoderBase

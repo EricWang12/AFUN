@@ -1,0 +1,24 @@
+defaults:
+  - paths
+  - model/decoder@decoder: sam3_decoder
+  - model/llm@llm: qwen3_vl_8B
+  - data: visual_genome
+  - train: trainer
+  - _self_
+
+stage: 1
+seed: 354
+model_name: afun-stage1
+rms_norm: false
+
+train:
+  # 49 samples per GPU per step (196 on 4 GPUs) as 7 x 7 accumulation: aligning the full
+  # batch at once runs SAM3 twice on 49 images and exceeds 96 GB.
+  batch_size: 7
+  grad_accumulation_steps: 7
+  training_cfg:
+    max_steps: 10000
+
+hydra:
+  run:
+    dir: ${paths.output}/${model_name}/${now:%Y-%m-%d_%H-%M-%S}

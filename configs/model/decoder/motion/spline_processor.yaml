@@ -5,7 +5,7 @@ _target_: src.models.decoder.motion_decoder.spline_processor.SplineProcessor
 model_cfg:
   q_dim: 256
   kv_dim: 4096
-  num_layers: 4       # set 4 or 6
+  num_layers: 6
   num_heads: 8
   mlp_ratio: 4.0
   dropout: 0.0
@@ -23,4 +23,3 @@ loss_cfg:
   reduction: mean
   weight: 1000.0
   curve_T: 16
-

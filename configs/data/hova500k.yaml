@@ -1,0 +1,16 @@
+# @package data
+_target_: src.data.hova500k.HOVA500KDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+
+data_dir: "${paths.data_roots.hova500k}"
+split: train
+index_file: "mask_annotation/dataset_index.json"
+binarize_mask: true
+mask_threshold: 0.5
+
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008
+    normalize_image: true

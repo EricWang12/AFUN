@@ -1,67 +1,36 @@
-# AFUN runtime requirements.
-#
-# IMPORTANT: install PyTorch FIRST, matching your CUDA, before this file.
-# Tested with CUDA 13 (Blackwell GPU):
-#   pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
-#       --index-url https://download.pytorch.org/whl/cu130
-# For other CUDA versions, swap the index URL (e.g. cu128, cu126, cu124).
-# See https://pytorch.org/get-started/locally/ . `install.sh` does this for you.
-#
-# These versions are a single coherent set that satisfies the AFUN model,
-# SAM3, Depth-Anything-3, and lingbot-depth together. (Each of those repos
-# nominally pins conflicting torch/numpy/xformers versions; we install them
-# with --no-deps and use this unified set instead — see install.sh.)
-
-# --- build / compat ---
-setuptools<81               # SAM3 imports the (now-removed-in-81+) pkg_resources
-
-# --- LLM / model / config ---
-transformers>=4.57          # Qwen3-VL support (tested with 5.9.0)
-tokenizers
-accelerate>=1.0
-peft>=0.13
-huggingface_hub>=0.34
-safetensors>=0.4
-gdown>=5.0                  # fetch the AFUN checkpoint (afun.pt) from Google Drive
-# NOTE: xformers must match the torch CUDA build.
-# It is installed by install.sh from the cu130 index.
+# Python 3.11. Install the matching PyTorch build first (see install.sh).
+setuptools<81
+transformers==5.16.1
+accelerate==1.15.0
+huggingface_hub==1.30.0
+safetensors==0.8.0
 hydra-core==1.3.2
 omegaconf==2.3.0
-
-# --- arrays / images / viz ---
-numpy>=2.0                  # 2.4.x tested (SAM3/DA3 nominally want <2, but 2.x works here)
-opencv-python>=4.10
-pillow>=10
-plotly>=6
-pyyaml
-wandb                       # imported at load by sam3_decoder / spline_processor (make_wandb_vis)
-
-# --- vision / 3D deps used by SAM3 + Depth-Anything-3 + lingbot-depth ---
-timm>=1.0.17
+numpy==1.26.4
+opencv-python==4.11.0.86
+pillow==12.3.0
+scipy==1.17.1
+timm==1.0.29
+einops==0.8.2
 ftfy==6.1.1
-regex
-iopath>=0.1.10
-einops>=0.8
-trimesh>=4
-open3d>=0.18
-scipy>=1.13
-matplotlib>=3.8
-imageio>=2.30
-tqdm
-typing_extensions
-addict                      # Sonata (point-transformer) config dicts
-yacs                        # Sonata config
-
-# NOTE: the Sonata depth encoder also needs two COMPILED, CUDA-specific packages
-# that are NOT pip-installable from this file (they depend on your torch/CUDA):
-#   - spconv  (e.g. spconv-cu124 wheel; works with cu13 runtime)
-#   - torch_scatter  (built from source against your torch — needs the CUDA toolkit)
-# install.sh installs these for you. flash_attn is optional and not required.
-
-# --- SAM3 transitive imports (its __init__ pulls in training/data code) ---
-decord==0.6.0
-pycocotools
-scikit-image
-open_clip_torch
-submitit
-openai
+iopath==0.1.10
+pycocotools==2.0.11
+torchmetrics==1.9.0
+datasets==5.0.1
+pyarrow==25.0.1  # pyarrow 26 refuses to import with NumPy < 2, which SAM3 requires
+eva-decord==0.6.1
+scikit-image==0.26.0
+open_clip_torch==3.3.0
+submitit==1.5.4
+addict==2.4.0
+yacs==0.1.8
+trimesh==4.11.3
+open3d==0.19.0
+matplotlib==3.11.1
+plotly==6.6.0
+imageio==2.37.4
+wandb==0.30.0
+gdown==6.2.0
+pyyaml==6.0.3
+tqdm==4.70.0
+zstandard==0.25.0

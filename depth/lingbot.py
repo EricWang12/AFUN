@@ -3,7 +3,7 @@
 Pure in-memory (no file I/O). The model is loaded lazily on first call and
 cached as a module-level singleton.
 
-Requires `xformers >= 0.0.35` (installed by install.sh).
+Requires `xformers == 0.0.34` (installed by install.sh).
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _load_model(device: torch.device):
         raise RuntimeError(
             f"lingbot-depth (mdm) not importable from {_LINGBOT_ROOT}. "
             "Check that extern/lingbot-depth/ is intact and the env "
-            "has xformers>=0.0.35. See extern/README.md."
+            "has xformers==0.0.34. See extern/README.md."
         ) from e
     print(f"[depth.lingbot] loading {MODEL_ID} on {device} (one-time; weights to ~/.cache/huggingface/hub/)")
     _MDM = MDMModel.from_pretrained(MODEL_ID).to(device).eval()

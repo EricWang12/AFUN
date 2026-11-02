@@ -1,26 +1,20 @@
-# src/models/llm/qwen_wrapper.py
+"""Qwen visual-language features with trainable MetaQuery tokens."""
 from __future__ import annotations
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+from typing import List
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 from PIL import Image
-from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
-from transformers.generation.utils import ModelOutput
-from contextlib import nullcontext
+from transformers import PreTrainedModel, PretrainedConfig
 from .base import LLMBase
 
-from peft import LoraConfig, TaskType, get_peft_model
 
 
 
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, AutoModelForImageTextToText
 
 
-# from transformers import AutoModelForCausalLM, AutoConfig
 
 class QwenWrapperConfig(PretrainedConfig):
     model_type = "qwen_wrapper"
@@ -35,14 +29,10 @@ class QwenWrapperConfig(PretrainedConfig):
         self.max_input_text_tokens = kwargs.get("max_input_text_tokens", 256)
         self.skip_lm_head = kwargs.get("skip_lm_head", False)
 
-# class QwenWrapper(GenerationMixin, PreTrainedModel, LLMBase):    
-class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):    
+class QwenWrapper(PreTrainedModel, LLMBase):    
     
-    config_class = QwenWrapperConfig            # GenerationMixin needs this
-    """
-    Wrapper for Qwen language models using Hugging Face transformers.
-    Supports various Qwen model variants like Qwen-7B, Qwen-14B, etc.
-    """
+    config_class = QwenWrapperConfig
+    """Encode image instructions and extract learned MetaQuery features."""
     num_metaqueries: int = 0
     def __init__(self, model_name="Qwen/Qwen-7B",
                  llm_cfg: dict | None = None,
@@ -50,36 +40,27 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
                  freeze: bool = False,
                  device: str = "cuda",
                  ):
-        self.llm_cfg = QwenWrapperConfig(**llm_cfg)
+        self.llm_cfg = QwenWrapperConfig(**(llm_cfg or {}))
         PreTrainedModel.__init__(self, self.llm_cfg)   # registers config etc.
         LLMBase.__init__(self, freeze=freeze)
 
-        # the rest of your __init__ exactly as before
         self.model_name = model_name
         self.freeze = freeze
         # HF weights use the default cache (~/.cache/huggingface, or $HF_HOME if set).
         self._cache_dir = None
 
 
-        self.metaquery_cfg = ft_cfg.metaquery_cfg if ft_cfg and hasattr(ft_cfg, 'metaquery_cfg') else None
+        from omegaconf import OmegaConf
+        self.metaquery_cfg = OmegaConf.create(ft_cfg.get("metaquery_cfg")) if ft_cfg and ft_cfg.get("metaquery_cfg") else None
         if self.metaquery_cfg and "metaquery_types" in self.metaquery_cfg:
             self.metaquery_cfg["num_metaqueries"] *= len(self.metaquery_cfg["metaquery_types"])
 
-        self.lora_cfg = ft_cfg.lora_cfg if ft_cfg and hasattr(ft_cfg, 'lora_cfg') else None
 
         self.num_point_tokens = ft_cfg.get("num_point_tokens", 0) if ft_cfg and hasattr(ft_cfg, 'num_point_tokens') else 0
 
 
 
-        # if self.lora_cfg:
-        #     self.lora_cfg = LoraConfig(**self.lora_cfg)
-        #     self.llm_model = get_peft_model(self.llm_model, self.lora_cfg)
         self.load_model(device=device)
-        # self.llm_hidden_size = self.llm_model.config.text_config.hidden_size
-        # try:
-        #     self.llm_hidden_size = self.llm_model.config.hidden_size
-        # except:
-        # self.llm_hidden_size = self.llm_model.config.hidden_size
         
     def _get_embed_tokens(self):
         """Find embed_tokens across different Qwen model structures."""
@@ -116,32 +97,20 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             return
         
         self.num_metaqueries = self.metaquery_cfg["num_metaqueries"]
-        # self.llm_model.config.use_sliding_window = False
-        # self.llm_model.config.sliding_window = None
         num_embeddings = self.llm_model.get_input_embeddings().num_embeddings
         self.num_embeddings = num_embeddings
         
         
         num_mq_extra_tokens = self.num_metaqueries + 2 if self.num_metaqueries > 0 else 0 # begin_of_img, end_of_img
-        # num_pc_extra_tokens = 3 if self.num_point_tokens > 0 else 0 # begin_of_point, pad_point, end_of_point
-        num_pc_extra_tokens = 3  # begin_of_point, pad_point, end_of_point
+        num_pc_extra_tokens = 3  # Reserved IDs retained for checkpoint compatibility.
         
         num_extra_tokens = num_mq_extra_tokens + num_pc_extra_tokens
 
         if self.num_metaqueries > 0:
-            # try:
-            #     self.llm_model.resize_token_embeddings(
-            #         num_embeddings + num_extra_tokens
-            #     )
-            # except:
             self.llm_model.resize_token_embeddings(
                 num_embeddings + num_extra_tokens, mean_resizing=False
             )
 
-        # def freeze_hook(grad):
-        #     # grad[: self.num_embeddings ].zero_()
-        #     grad[:-num_mq_extra_tokens].zero_()
-        #     return grad
 
         def freeze_hook(grad: torch.Tensor) -> torch.Tensor:
             # build a *new* mask tensor the same size as the grad
@@ -150,17 +119,14 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             return grad * mask                          # never modify grad in-place
         
 
-        # self.llm_model.model.embed_tokens.weight.register_hook(freeze_hook)
         embed_tokens = self._get_embed_tokens()
         # Store handle so freeze_segmentation_metaqueries() can swap the hook later.
         self._embed_freeze_handle = embed_tokens.weight.register_hook(freeze_hook)
             
         try:
             self.llm_hidden_size = self.llm_model.config.hidden_size
-        except:
+        except AttributeError:
             self.llm_hidden_size = self.llm_model.config.text_config.hidden_size
-        # self.llm_hidden_size = self.llm_model.config.hidden_size
-        # self.model.lm_head = nn.Identity()
         
         self.processor.num_metaqueries = self.num_metaqueries
         tokenizer = getattr(self.processor, "tokenizer", self.processor)
@@ -172,7 +138,6 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
                 ]
             }
         )
-        # if self.num_point_tokens > 0:
         tokenizer.add_special_tokens({"additional_special_tokens": ["<|begin_of_point|>", "<|pad_point|>", "<|end_of_point|>"]})
         self.point_start_token_id = tokenizer.convert_tokens_to_ids("<|begin_of_point|>")
         self.point_pad_token_id = tokenizer.convert_tokens_to_ids("<|pad_point|>")
@@ -189,17 +154,7 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
 
 
     def _apply_metaquery_rms_norm(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply self.rms_norm_layer to (B, num_metaqueries, H).
-
-        Default behavior: jointly normalize over all `num_metaqueries × H` elements
-        (this is what `nn.RMSNorm((num_metaqueries, H))` does — one scalar per batch).
-
-        When `self._split_rms_per_type` is True (set by `freeze_segmentation_metaqueries`),
-        normalize each metaquery-type slice INDEPENDENTLY. This decouples semantic and
-        motion through the RMS denominator: motion mq drift no longer changes the rms
-        scalar used for the semantic side, so the semantic embedding fed to the SAM3
-        projector is identical across ckpts as long as semantic mq input is.
-        """
+        """Normalize jointly, or per query type when segmentation is frozen."""
         if not getattr(self, "_split_rms_per_type", False):
             return self.rms_norm_layer(x)
 
@@ -222,15 +177,7 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
         return torch.cat(normed, dim=1)
 
     def freeze_segmentation_metaqueries(self) -> None:
-        """Replace the embed_tokens gradient hook so only the 'motion' metaquery rows
-        receive gradients. Boundary tokens (`<begin_of_mq>`, `<end_of_mq>`) and the
-        semantic mq rows become frozen — under causal attention, `<begin_of_mq>` is
-        the only one of those that affects semantic hidden states, but freezing all
-        non-motion rows is the cleanest invariant for "segmentation behavior unchanged".
-
-        Also freezes `rms_norm_layer` and switches its application to per-type so the
-        joint RMS denominator can't couple motion drift into the semantic embedding.
-        """
+        """Train only motion queries and isolate their RMS normalization."""
         if self.num_metaqueries <= 0:
             return
 
@@ -286,7 +233,7 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
         self._split_rms_per_type = True
 
     def tokenize(self, caption: str|List[str], pc_embeddings: torch.Tensor = None, image: List[List[Image.Image]] | List[List[torch.Tensor]] = None, text_response: List[str] = None, add_generation_prompt: bool = True) -> torch.Tensor:
-        if not isinstance(caption, List):
+        if isinstance(caption, str):
             caption = [caption]
 
         # if disable image, set image to None
@@ -294,7 +241,6 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             image = None
     
 
-        # ================== Metaquery Handling ==================
         if  self.num_metaqueries <= 0:
             suffix = ""
         else:
@@ -362,7 +308,6 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
                 for cap, imgs in zip(caption, image)
             ]
             kwargs = {"images": [imgs for imgs in image if imgs]}
-            # kwargs = dict()
         else:
             conversations = [
                 prefix
@@ -377,17 +322,11 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             kwargs = dict()
 
 
-        # print(conversations)
-        # Disable thinking mode for Qwen3.5+ (otherwise outputs contain <think> blocks)
-        # template_kwargs = {}
-        # if "Qwen3" in self.model_name:
-        #     template_kwargs["chat_template_kwargs"] = {"enable_thinking": False}
-
         import warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="Kwargs passed to.*processor_kwargs")
             prompts = [
-                self.processor.apply_chat_template(conv, add_generation_prompt=True)
+                self.processor.apply_chat_template(conv, add_generation_prompt=add_generation_prompt)
                 for conv in conversations
             ]
             if text_response is not None:
@@ -405,7 +344,6 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
                 **kwargs,
             ).to(self.llm_model.device)
         
-        # print(prompts)
         if   "pixel_values" in text_inputs:
             text_inputs["pixel_values"] = text_inputs["pixel_values"].unsqueeze(0)
         return text_inputs
@@ -433,7 +371,6 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
                 model_path,
                 dtype="auto",
                 device_map=device,
-                # attn_implementation="sdpa",
                 cache_dir=self._cache_dir
             )
             cfg = self.llm_model.config
@@ -506,104 +443,9 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
         kwargs.pop("pixel_values",     None)
         kwargs.pop("image_sizes",      None)
 
-        # if inputs_embeds is None:
-        embed_tokens = self._get_embed_tokens()
-        inputs_embeds = embed_tokens(input_ids)
-        
-        if  point_cloud_embeddings is not None:
-            new_input_embeds = []
-            new_attention_mask = []
-            
-            if isinstance(point_cloud_embeddings, torch.Tensor):
-                if point_cloud_embeddings.ndim == 2:
-                    point_cloud_embeddings = point_cloud_embeddings.unsqueeze(0)
-                    
-                point_cloud_embeddings = list(point_cloud_embeddings)
-            
-            _, D = point_cloud_embeddings[0].shape
-            B = len(point_cloud_embeddings)
-            assert B == input_ids.shape[0], f"Batch size mismatch: point_cloud_embeddings ({B}) vs input_ids ({input_ids.shape[0]})"
-            assert D == inputs_embeds.shape[-1], f"Embedding dim mismatch: point_cloud_embeddings ({D}) vs inputs_embeds ({inputs_embeds.shape[-1]})"
+        if point_cloud_embeddings is not None:
+            raise ValueError("AFUN accepts RGB images; point-cloud prompt tokens are unsupported.")
 
-                        
-            cur_point_idx = 0
-            max_num_tokens = 0
-            
-            for cur_input_ids, cur_input_embeds, cur_attention_mask in zip(
-                input_ids, inputs_embeds, attention_mask
-            ):  # * input_ids: B, L; input_embeds: B, L, C
-                # * point_cloud_embeddings: B, N, C
-                
-                cur_point_features = (
-                    point_cloud_embeddings[cur_point_idx]
-                    .to(device=cur_input_embeds.device, dtype=cur_input_embeds.dtype)
-                    .squeeze(0)
-                )
-                
-                if cur_point_features.shape[0] > self.num_point_tokens:
-                    # clamp to the configured number of point tokens
-                    cur_point_features = cur_point_features[:self.num_point_tokens]
-                num_patches = cur_point_features.shape[0]  # * number of point tokens
-                num_point_start_tokens = (
-                    (cur_input_ids == self.point_start_token_id).sum().item()
-                )
-                num_point_end_tokens = (
-                    (cur_input_ids == self.point_end_token_id).sum().item()
-                )
-                # currently, we only support one point start and one point end token
-                assert num_point_start_tokens == num_point_end_tokens == 1, (
-                    "The number of point start tokens and point end tokens should be 1, "
-                    f"but got {num_point_start_tokens} and {num_point_end_tokens}."
-                )
-                point_start_token_pos = torch.where(
-                    cur_input_ids == self.point_start_token_id
-                )[0][0]
-                point_end_token_pos = torch.where(
-                    cur_input_ids == self.point_end_token_id
-                )[0][0]
-                
-                
-                # point_pos_embeedings = cur_input_embeds[point_start_token_pos+1:point_end_token_pos]
-                
-                point_pos_embeedings  = torch.cat([cur_point_features, cur_input_embeds[point_start_token_pos+1+cur_point_features.shape[0]:point_end_token_pos]], dim=0)
-                
-                cur_new_input_embeds = torch.cat(
-                    (
-                        cur_input_embeds[: point_start_token_pos + 1],
-                        point_pos_embeedings,
-                        cur_input_embeds[point_end_token_pos:],
-                    ),
-                    dim=0,
-                )
-                cur_new_attention_mask = torch.cat(
-                    (
-                        cur_attention_mask[: point_start_token_pos + 1],
-                        torch.ones(num_patches, device=cur_attention_mask.device, dtype=cur_attention_mask.dtype),
-                        cur_attention_mask[point_end_token_pos:],
-                    ),
-                    dim=0,
-                )
-                cur_point_idx += 1
-                new_input_embeds.append(cur_new_input_embeds)
-                new_attention_mask.append(cur_new_attention_mask)
-                if cur_new_input_embeds.shape[0] > max_num_tokens:
-                    max_num_tokens = cur_new_input_embeds.shape[0]
-                
-            for i in range(len(new_input_embeds)):
-                cur_input_embeds = new_input_embeds[i]
-                last_row = cur_input_embeds[-1]
-                padding = last_row.repeat(max_num_tokens - cur_input_embeds.shape[0], 1)
-                new_input_embeds[i] = torch.cat([cur_input_embeds, padding], dim=0)
-
-                cur_attention_mask = new_attention_mask[i]
-                new_attention_mask[i] = F.pad(
-                    cur_attention_mask,
-                    (0, max_num_tokens - cur_attention_mask.shape[0]),
-                    value=0,
-                )
-            inputs_embeds = torch.stack(new_input_embeds, dim=0)
-            attention_mask = torch.stack(new_attention_mask, dim=0)
-            
         # If skip_lm_head was set at init, _final_norm is the cached norm layer
         # and lm_head was replaced with Identity. Register a hook each forward
         # to capture the last hidden state without output_hidden_states=True.
@@ -622,14 +464,16 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             input_ids=input_ids, attention_mask=attention_mask,
             pixel_values=pixel_values, image_grid_thw=image_grid_thw,
             output_hidden_states=(not _skip_lm_head),
+            use_cache=False,
         )
         if mm_token_type_ids is not None:
             llm_kwargs["mm_token_type_ids"] = mm_token_type_ids
         llm_kwargs.update(kwargs)
-        outputs = self.llm_model(**llm_kwargs)
-
-        if hook_handle is not None:
-            hook_handle.remove()
+        try:
+            outputs = self.llm_model(**llm_kwargs)
+        finally:
+            if hook_handle is not None:
+                hook_handle.remove()
 
         batch_size, seq_len = input_ids.shape
         indices = torch.arange(seq_len, device=input_ids.device)[None, :].expand(batch_size, -1)
@@ -672,66 +516,8 @@ class QwenWrapper(PreTrainedModel, LLMBase, GenerationMixin):
             # Apply the inverse mask to logits
             outputs.logits = outputs.logits[inverse_mask].view(batch_size, -1, outputs.logits.size(-1))
 
-            # outputs.logits = outputs.logits[indices < boi_pos[:, None]]
-            # outputs.logits = outputs.logits.view(
-            #     batch_size, -1, outputs.logits.size(-1)
-            # )
 
         # Convert to plain dict so DDP pytree doesn't try to reconstruct
         # the HF ModelOutput with custom keys (metaquery_prompt_embeds etc.)
         return dict(outputs)
         
-    # -------------  GENERATION HOOKS  -----------------
-    # GenerationMixin will call this before every step.
-    def prepare_inputs_for_generation(
-        self,
-        input_ids: torch.LongTensor,
-        attention_mask: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
-        image_sizes: torch.Tensor | None = None,
-        mm_token_type_ids: torch.Tensor | None = None,
-        **model_kwargs,
-    ) -> Dict[str, Any]:
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "pixel_values": pixel_values,
-            "image_sizes": image_sizes,
-            "mm_token_type_ids": mm_token_type_ids,
-            **model_kwargs,
-        }
-
-    # if you use past_key_values you may also need:
-    # def _reorder_cache(self, past_key_values, beam_idx, **kwargs):
-    #     return self.llm_model._reorder_cache(past_key_values, beam_idx, **kwargs)
-
-    # -------------  PUBLIC HELPER  -----------------
-    @torch.no_grad()
-    def generate_from_caption(
-        self,
-        caption: str | List[str],
-        image: List[List[Image.Image]] | None = None,
-        **generate_kwargs,
-    ):
-        """
-        Convenience wrapper:
-        1. builds the multimodal prompt (self.tokenize)
-        2. delegates to GenerationMixin.generate (super().generate)
-        Because this class owns .forward, those generation steps
-        will go through YOUR forward each time.
-        """
-        model_inputs = self.tokenize(caption, image, add_generation_prompt=True)
-
-        input_ids = model_inputs.pop("input_ids")
-        # GenerationMixin expects *remaining* tensors in model_kwargs
-        generate_kwargs = {**model_inputs, **generate_kwargs}
-
-        # Use mixed‑precision only if we're on CUDA & fp16
-        ctx = torch.autocast("cuda", dtype=torch.float16) \
-              if input_ids.is_cuda and input_ids.dtype == torch.float16 else nullcontext()
-
-        with ctx:
-            return self.generate(
-                input_ids=input_ids,
-                **generate_kwargs
-            )

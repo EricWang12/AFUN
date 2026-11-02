@@ -1,0 +1,11 @@
+# @package _global_
+paths:
+  data_root: ${oc.env:AFUN_DATA_ROOT,data}
+  output: ${oc.env:AFUN_OUTPUT_DIR,outputs}
+  data_roots:
+    visual_genome: ${paths.data_root}/visual_genome
+    instruct_part: ${paths.data_root}/instruct_part
+    ragnet: ${paths.data_root}/RAGNet/data/data
+    hova500k: ${paths.data_root}/HOVA-500K
+    reasonaff: ${paths.data_root}/reasonaff
+    robot: ${paths.data_root}/afun_train

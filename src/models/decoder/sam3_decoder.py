@@ -16,12 +16,7 @@ from sam3.model.model_misc import SAM3Output  # pyright: ignore[reportMissingImp
 from .base import DecoderBase
 from hydra.utils import instantiate
 from sam3.model_builder import build_sam3_image_model # pyright: ignore[reportMissingImports]
-from sam3.visualization_utils import plot_results  # pyright: ignore[reportMissingImports]
-import wandb  # type: ignore
-from PIL import Image
 
-from src.utils.motion_vis import visualize_trajectory_on_mask
-from src.utils.misc import *
 
 
 def _to_device(x: Any, dev: str):
@@ -42,7 +37,7 @@ def _to_device(x: Any, dev: str):
 
 
 class _QwenToSam3Projector(nn.Module):
-    """Match `qwen_to_sam_metaquery.py` projector (2-layer MLP)."""
+    """Two-layer MLP from Qwen hidden states to SAM3 language features."""
 
     def __init__(self, in_dim: int, out_dim: int = 256):
         super().__init__()
@@ -57,18 +52,7 @@ class _QwenToSam3Projector(nn.Module):
 
 
 class Sam3Decoder(DecoderBase):
-    """
-    Decoder wrapper that uses SAM3 for (image) grounding/segmentation.
-
-    This follows the `DecoderBase.forward(point_cloud, feature, images, ...)` convention used in this repo:
-    - `point_cloud` is ignored (kept only for API compatibility)
-    - `images` is required: (B, 3, H, W), ideally already resized+normalized like SAM3 expects
-    - `feature` is the LLM metaquery prompt embeddings: (B, Q, H_llm)
-    - `metaquery_attention_mask` (optional) should be (B, Q) with 1 for valid tokens, 0 for padding
-
-    Internally we project LLM embeddings -> 256 dim and feed SAM3 via `forward_grounding`, using the same
-    "language_features/language_mask" convention as SAM3's own text encoder outputs.
-    """
+    """Project MetaQueries into frozen SAM3 and optionally predict motion."""
 
     def __init__(
         self,
@@ -116,11 +100,6 @@ class Sam3Decoder(DecoderBase):
         self.return_dict: bool = bool(model_cfg.get("return_dict", False))
 
 
-        # self.loss = {
-        #     key: el  # wrap_base_loss(el)
-        #     for (key, el) in instantiate(loss, _convert_="all").items()
-        # }
-        # self.loss = nn.ModuleDict(self.loss)
         loss_obj = loss
         if isinstance(loss, (DictConfig, ListConfig, dict, list)):
             loss_obj = instantiate(loss, _convert_="all")
@@ -178,14 +157,7 @@ class Sam3Decoder(DecoderBase):
             self.apply_freeze()
 
     def freeze_segmentation_components(self) -> None:
-        """Freeze every parameter that affects segmentation outputs.
-
-        Set by EndToEndModel when the experiment yaml has `freeze_segmentation: true`.
-        Sets requires_grad=False on the SAM3 model, the Qwen->SAM3 projector, and any
-        learnable params inside the loss module. Also flips the `freeze_segmentation`
-        flag so forward() can short-circuit the SAM3 loss path and wrap the SAM3
-        forward in torch.no_grad().
-        """
+        """Freeze segmentation parameters and omit their loss."""
         self.freeze_segmentation = True
         if self.sam3_model is not None:
             for p in self.sam3_model.parameters():
@@ -255,8 +227,6 @@ class Sam3Decoder(DecoderBase):
             raise RuntimeError("Projector is not initialized. Did `load_model` run?")
 
         x = metaquery_prompt_embeds
-        # if self.rms_norm is not None:
-        #     x = self.rms_norm(x)
 
         if metaquery_attention_mask is None:
             metaquery_attention_mask = torch.ones(x.shape[0], x.shape[1], device=x.device, dtype=torch.long)
@@ -355,11 +325,8 @@ class Sam3Decoder(DecoderBase):
         if self.predict_motion and has_motion and motion_dirs_list:
             result["motion_directions"] = motion_dirs_list
             # # tensor to list of tensors
-            # motion_dirs = outputs["motion_directions"][keep]  # shape: (K, 3)
             
-            # if isinstance(motion_dirs, torch.Tensor):
             #     result["motion_directions"] = [motion_dirs[i] for i in range(motion_dirs.shape[0])]
-            # else:
             #     result["motion_directions"] = motion_dirs
                 
         return result
@@ -438,6 +405,7 @@ class Sam3Decoder(DecoderBase):
                 find_stages = SAM3Output(output=[[outputs]])
                 targets_dict = self.sam3_model.back_convert(find_target)
                 losses = self.loss["main"](find_stages, [targets_dict])
+                losses["sam3_loss"] = losses["core_loss"].detach()
 
             if self.predict_motion and has_motion and motion_feature is not None:
                 # Encode depth if encoder is available
@@ -465,8 +433,9 @@ class Sam3Decoder(DecoderBase):
                     losses["motion_loss"] = motion_loss["loss"].detach()
                     losses["core_loss"] = motion_loss["loss"]
                 else:
-                    sam_loss_weight = float(self.model_cfg.get("sam_loss_weight", 1.0))
-                    sam_weighted = sam_loss_weight * losses["core_loss"]
+                    # sam_loss_weight applies only to batches with motion supervision;
+                    # segmentation-only batches keep the full SAM3 loss.
+                    sam_weighted = float(self.model_cfg.get("sam_loss_weight", 1.0)) * losses["core_loss"]
                     # Log both terms as their weighted contribution to core_loss,
                     # so sam3_loss + motion_loss ≈ core_loss and reweighting is visible.
                     losses["sam3_loss"] = sam_weighted.detach()
@@ -533,234 +502,4 @@ class Sam3Decoder(DecoderBase):
     def normalize_pc(self, pc: np.ndarray | torch.Tensor):
         # SAM3 is image-based; keep point cloud unchanged for API compatibility.
         return pc
-
-    def make_wandb_vis(self, batch: Dict[str, Any], model_outputs: Dict[str, Any], *, step: int, idx: int = 0, draw_trajectory: bool = False, output_path: str = None):
-        """
-        Minimal SAM3 visualization for WandB:
-        - postprocess predictions via `self._postprocess(...)`
-        - plot with SAM3 `plot_results(...)`
-        - returns dict ready to merge into `wandb.log(...)`
-        """
-        if "image" not in batch or batch["image"] is None:
-            return None
-        if "find_target" not in batch or batch["find_target"] is None:
-            return None
-        if "outputs" not in model_outputs or model_outputs["outputs"] is None:
-            return None
-
-
-        img_bchw = batch["image"]
-        if not torch.is_tensor(img_bchw) or img_bchw.ndim != 4:
-            return None
-        B, _, H, W = map(int, img_bchw.shape)
-        # Default to predict_motion: combined data modules set has_motion per-sample,
-        # but single-source datasets (e.g. robot) don't — so fall back to the model config.
-        has_motion = batch.get("has_motion", bool(self.predict_motion))
-
-        idx = idx
-        x = img_bchw[idx].detach().float()
-        if float(x.min()) < 0.0:
-            x = x * 0.5 + 0.5  # [-1,1] -> [0,1]
-        x = x.clamp(0.0, 1.0)
-        img_uint8 = (x * 255.0).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()
-        img_pil = Image.fromarray(img_uint8)
-
-        q = batch.get("query", None)
-        q0 = q[idx] if isinstance(q, list) and len(q) > idx else q
-        caption = f"step={int(step)} | query={q0}"
-
-        post = self._postprocess(model_outputs["outputs"], orig_sizes=[(H, W)] * B, has_motion=has_motion)
-        pred_results = {
-            "boxes": post["boxes"][idx].detach(),
-            "scores": post["scores"][idx].detach(),
-            "masks": post["masks"][idx].detach().to(torch.float32).unsqueeze(1),  # (K,1,H,W)
-            "motion_directions": post["motion_directions"][idx].detach() if (self.predict_motion and has_motion and "motion_directions" in post) else None,
-        }
-
-        while post["boxes"][idx].shape[0] == 0 and idx < B - 1:
-            idx += 1
-            pred_results = {
-                "boxes": post["boxes"][idx].detach(),
-                "scores": post["scores"][idx].detach(),
-                "masks": post["masks"][idx].detach().to(torch.float32).unsqueeze(1),  # (K,1,H,W)
-                "motion_directions": post["motion_directions"][idx].detach() if (self.predict_motion and has_motion and "motion_directions" in post) else None,
-            }
-        
-        if post["boxes"][idx].shape[0] == 0:
-            return {}
-        
-        vis_images = {}
-
-        pred_fig = plot_results(img_pil, pred_results)
-        
-        ft = batch["find_target"]
-        num_boxes = getattr(ft, "num_boxes", None)
-        boxes_packed = getattr(ft, "boxes", None)
-        segs_packed = getattr(ft, "segments", None)
-        if not (torch.is_tensor(num_boxes) and torch.is_tensor(boxes_packed) and torch.is_tensor(segs_packed)):
-            vis_images.update({"vis/sam3_pred": wandb.Image(pred_fig, caption=caption)})
-            return vis_images
-
-        start = int(num_boxes[:idx].sum().item())
-        K = int(num_boxes[idx].item())
-        if K <= 0:
-            vis_images.update({"vis/sam3_pred": wandb.Image(pred_fig, caption=caption)})
-            return vis_images
-
-        gt_boxes_cxcywh = boxes_packed.view(-1, 4)[start : start + K]  # (K,4) norm cxcywh
-        cx, cy, bw, bh = gt_boxes_cxcywh.unbind(dim=-1)
-        x0 = (cx - 0.5 * bw) * float(W)
-        y0 = (cy - 0.5 * bh) * float(H)
-        x1 = (cx + 0.5 * bw) * float(W)
-        y1 = (cy + 0.5 * bh) * float(H)
-        gt_boxes_xyxy = torch.stack([x0, y0, x1, y1], dim=-1)
-
-        gt_results = {
-            "boxes": gt_boxes_xyxy,
-            "scores": torch.ones((K,), device=gt_boxes_xyxy.device, dtype=torch.float32),
-            "masks": segs_packed[start : start + K].to(torch.float32).unsqueeze(1),  # (K,1,H,W)
-        }
-        if self.predict_motion and has_motion and self.motion_processor is not None and hasattr(self.motion_processor, "make_wandb_vis"):
-            vis_images.update(self.motion_processor.make_wandb_vis(batch, pred_results, gt_results, step=step, idx=idx, output_path=output_path))
-
-        # if self.predict_motion and draw_trajectory and batch.get("traj_data", None) is not None and batch.get("head_intrinsic", None) is not None:
-        #     traj_data = batch["traj_data"][idx]
-        #     head_intrinsic = batch["head_intrinsic"][idx]
-            
-        #     if  post["masks"][idx].shape[0] != 0:
-        #         vis_image = visualize_trajectory_on_mask(img_pil, 
-        #                                     post["masks"][idx].detach().to(torch.float32).squeeze(1), 
-        #                                     post["motion_directions"][idx].detach(), 
-        #                                     None, 
-        #                                     head_intrinsic,
-        #                                     arrow_length=80,
-        #                                     figsize=(10, 10))
-            
-        #         gt_image = visualize_trajectory_on_mask(img_pil, 
-        #                                     batch['find_target'].segments[0].detach(), 
-        #                                     batch['find_target'].motion_directions[idx].detach(), 
-        #                                     traj_data, 
-        #                                     head_intrinsic,
-        #                                     arrow_length=80,
-        #                                     figsize=(10, 10))
-                
-        #         # vis_images["vis/motion_pred"] = wandb.Image(vis_image, caption=caption)
-        #         # vis_images["vis/motion_gt"] = wandb.Image(gt_image, caption=caption)
-        #         vis_images["vis/motion_pred_vs_gt"] = wandb.Image(concat_side_by_side(vis_image, gt_image), caption=caption)
-        #         if output_path is not None:
-        #             vis_images["vis/sam3_pred_vs_gt"].save(output_path + "/sam3_pred_vs_gt.png")
-
-
-        gt_fig = plot_results(img_pil, gt_results)
-
-        vis_images.update({
-            # "vis/sam3_pred": wandb.Image(pred_fig, caption=caption),
-            # "vis/sam3_gt": wandb.Image(gt_fig, caption=caption),
-            "vis/sam3_pred_vs_gt": wandb.Image(concat_side_by_side(pred_fig, gt_fig), caption=caption),
-        })
-        
-        # if hasattr(self.motion_processor, "make_wandb_vis"):
-        #     vis_images.update(self.motion_processor.make_wandb_vis(batch, model_outputs, step=step, idx=idx, output_path=output_path))
-            
-        return vis_images
-    
-    def _debug_save_vis(
-        self,
-        images: torch.Tensor,                  # (B,3,H,W) normalized [-1,1] or [0,1]
-        outputs: Dict[str, Any],               # SAM3 forward_grounding output
-        find_target: Optional[Any] = None,     # your packed targets (optional)
-        **kwargs,
-    ) -> None:
-        debug_dir = kwargs.get("debug_vis_dir", None)  # e.g. "/tmp/sam3_debug"
-        if not debug_dir:
-            return
-
-
-        step = int(kwargs.get("global_step", kwargs.get("step", 0)))
-        every = int(kwargs.get("debug_vis_every", 1))
-        if every > 1 and (step % every != 0):
-            return
-
-        os.makedirs(debug_dir, exist_ok=True)
-
-        idx = int(kwargs.get("debug_vis_idx", 0))
-        B, _, H, W = images.shape
-        idx = max(0, min(idx, B - 1))
-
-        # image -> uint8 PIL
-        x = images[idx].detach().float()
-        if float(x.min()) < 0.0:
-            x = x * 0.5 + 0.5  # [-1,1] -> [0,1]
-        x = x.clamp(0.0, 1.0)
-        img = Image.fromarray((x * 255).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy())
-
-        # pred fig
-        post = self._postprocess(outputs, orig_sizes=[(H, W)] * B)
-        pred_results = {
-            "boxes": post["boxes"][idx].detach().cpu(),
-            "scores": post["scores"][idx].detach().cpu(),
-            "masks": post["masks"][idx].detach().to(torch.float32).unsqueeze(1).cpu(),  # (K,1,H,W)
-        }
-        pred_fig = plot_results(img, pred_results)
-
-        out_img = pred_fig
-        start = K = 0  # for optional motion below
-
-        # gt fig (if available) + concat
-        ft = find_target
-        if ft is not None and hasattr(ft, "num_boxes") and hasattr(ft, "boxes") and hasattr(ft, "segments"):
-            num_boxes, boxes_packed, segs_packed = ft.num_boxes, ft.boxes, ft.segments
-            if torch.is_tensor(num_boxes) and torch.is_tensor(boxes_packed) and torch.is_tensor(segs_packed):
-                start = int(num_boxes[:idx].sum().item())
-                K = int(num_boxes[idx].item())
-                if K > 0:
-                    gt_boxes_cxcywh = boxes_packed.view(-1, 4)[start : start + K]  # (K,4) norm cxcywh
-                    cx, cy, bw, bh = gt_boxes_cxcywh.unbind(dim=-1)
-                    x0 = (cx - 0.5 * bw) * float(W)
-                    y0 = (cy - 0.5 * bh) * float(H)
-                    x1 = (cx + 0.5 * bw) * float(W)
-                    y1 = (cy + 0.5 * bh) * float(H)
-                    gt_boxes_xyxy = torch.stack([x0, y0, x1, y1], dim=-1).cpu()
-
-                    gt_results = {
-                        "boxes": gt_boxes_xyxy,
-                        "scores": torch.ones((K,), dtype=torch.float32),
-                        "masks": segs_packed[start : start + K].to(torch.float32).unsqueeze(1).cpu(),
-                    }
-                    gt_fig = plot_results(img, gt_results)
-                    out_img = concat_side_by_side(pred_fig, gt_fig)
-
-        Image.fromarray(out_img).save(os.path.join(debug_dir, f"sam3_pred_vs_gt_step{step}_b{idx}.png"))
-
-        # optional motion pred vs gt (only if caller passes traj_data/head_intrinsic)
-        if (
-            self.predict_motion
-            and ("motion_directions" in outputs)
-            and (ft is not None)
-            and hasattr(ft, "motion_directions")
-        ):
-            traj_data = kwargs.get("traj_data", None)
-            head_intrinsic = kwargs.get("head_intrinsic", None)
-            if traj_data is not None and head_intrinsic is not None and post["masks"][idx].numel() > 0 and K > 0:
-                mp = visualize_trajectory_on_mask(
-                    img,
-                    post["masks"][idx].detach().to(torch.float32).cpu(),
-                    outputs["motion_directions"][idx].detach().cpu(),
-                    None,
-                    head_intrinsic[idx],
-                    arrow_length=80,
-                    figsize=(10, 10),
-                )
-                mg = visualize_trajectory_on_mask(
-                    img,
-                    ft.segments[start : start + K].detach().to(torch.float32).cpu(),
-                    ft.motion_directions[idx].detach().cpu(),
-                    traj_data[idx],
-                    head_intrinsic[idx],
-                    arrow_length=80,
-                    figsize=(10, 10),
-                )
-                Image.fromarray(concat_side_by_side(mp, mg)).save(
-                    os.path.join(debug_dir, f"motion_pred_vs_gt_step{step}_b{idx}.png")
-                )
 

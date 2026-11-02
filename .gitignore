@@ -34,9 +34,9 @@ multirun/
 .claude/
 archive/
 
-# Local docs / planning notes (kept on disk, not tracked)
-docs/
-
 # Large model weights — kept on disk, not in git (too big to push)
 checkpoints/
 *.pt
+# Local datasets and environments (repo root only: src/data/ and configs/data/ are code)
+/data/
+/.venv/

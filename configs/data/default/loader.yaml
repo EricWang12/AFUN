@@ -1,0 +1,7 @@
+batch_size: ${oc.select:train.batch_size,4}
+shuffle: true
+seed: ${oc.select:seed,354}
+num_workers: 4
+pin_memory: true
+persistent_workers: true
+prefetch_factor: 2

@@ -1,8 +1,0 @@
-# @package train
-# Stub — the inference path never instantiates the trainer.
-# Kept only because the chosen config's `defaults:` chain composes it.
-batch_size: 1
-lr: 0.0
-use_wandb: false
-grad_accumulation_steps: 1
-training_cfg: {}

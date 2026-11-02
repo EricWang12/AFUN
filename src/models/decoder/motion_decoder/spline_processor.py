@@ -4,8 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Any
 
-import cv2
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,8 +11,6 @@ import torch.nn.functional as F
 from src.models.decoder.motion_decoder.motion_processor import (
     BaseMotionProcessor,
 )
-from src.models.decoder.motion_decoder.FSFrame import compute_spline_curve, plotly_pointcloud_and_curve
-import wandb
 
 
 def _binomial_coeffs(n: int, *, device=None, dtype=None) -> torch.Tensor:
@@ -23,34 +19,6 @@ def _binomial_coeffs(n: int, *, device=None, dtype=None) -> torch.Tensor:
     for k in range(1, n + 1):
         vals.append(vals[-1] * (n - k + 1) // k)
     return torch.tensor(vals, device=device, dtype=dtype)
-
-
-def _curve_frames_from_points(pts: torch.Tensor, r0=None):
-    """Convert (T,3) sample points into (r_curve, R_curve) for plotting.
-
-    Frames are a simple parallel-transport chain from a crude initial frame;
-    only the arrow-tip tangent R_curve[-1,:,0] is used by the plotter.
-    """
-    if torch.is_tensor(r0):
-        r0 = r0.to(dtype=pts.dtype, device=pts.device)
-    elif r0 is not None:
-        import numpy as _np
-        r0 = torch.as_tensor(_np.asarray(r0), dtype=pts.dtype, device=pts.device)
-    if r0 is not None and r0.shape[-1] == 3:
-        pts = pts + r0[None, :]
-    # Tangents from finite differences.
-    deltas = torch.cat([pts[1:2] - pts[0:1], pts[2:] - pts[:-2], pts[-1:] - pts[-2:-1]], dim=0)
-    T = deltas / (torch.linalg.norm(deltas, dim=-1, keepdim=True) + 1e-12)
-    # Build any perpendicular axis
-    up = torch.tensor([0.0, 0.0, 1.0], dtype=pts.dtype, device=pts.device)
-    axis = torch.linalg.cross(T, up[None, :].expand_as(T), dim=-1)
-    norm = torch.linalg.norm(axis, dim=-1, keepdim=True)
-    fallback = torch.tensor([0.0, 1.0, 0.0], dtype=pts.dtype, device=pts.device)
-    axis = torch.where(norm < 1e-6, torch.linalg.cross(T, fallback[None, :].expand_as(T), dim=-1), axis)
-    N = axis / (torch.linalg.norm(axis, dim=-1, keepdim=True) + 1e-12)
-    B = torch.linalg.cross(T, N, dim=-1)
-    R = torch.stack([T, N, B], dim=-1)
-    return pts.detach().cpu().numpy(), R.detach().cpu().numpy()
 
 
 @dataclass
@@ -250,102 +218,3 @@ class SplineProcessor(BaseMotionProcessor):
         return {"loss": loss, "Lcurve": Lcurve, "Ldeg": Ldeg}
 
 
-    def make_wandb_vis(self, batch: Dict[str, Any], pred_results: Dict[str, Any], gt_results: Dict[str, Any], *, step: int, idx: int = 0, output_path: str = None, pred_masks=None) -> Dict[str, Any]:
-        import traceback as _tb
-        try:
-            return self._make_wandb_vis_impl(batch, pred_results, gt_results, step=step, idx=idx, output_path=output_path, pred_masks=pred_masks)
-        except Exception as e:
-            print(f"[SplineProcessor.make_wandb_vis] ERROR: {e}")
-            _tb.print_exc()
-            return {}
-
-    def _make_wandb_vis_impl(self, batch: Dict[str, Any], pred_results: Dict[str, Any], gt_results: Dict[str, Any], *, step: int, idx: int = 0, output_path: str = None, pred_masks=None) -> Dict[str, Any]:
-
-        # NOTE: assumes a single object per image.
-
-        depth = batch['depth'][idx].cpu().numpy()
-        dh, dw = depth.shape[-2], depth.shape[-1]
-
-        # Use stacked batch["image"] tensor (always available, (B,3,H,W)) to avoid
-        # list-of-tensors issues with image_raw / image_unnormalized.
-        x = batch["image"][idx].detach().float()
-        if x.ndim == 3 and x.shape[0] == 3:
-            if x.min() < 0:
-                x = x * 0.5 + 0.5  # SAM3 normalization: [-1,1] -> [0,1]
-            x = x.clamp(0, 1)
-            rgb = (x * 255.0).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()
-        else:
-            raise ValueError("Input image tensor must be shape (3, H, W)")
-
-        # Resize rgb to match depth (480x640) — intrinsics are already scaled to this resolution
-        if rgb.shape[0] != dh or rgb.shape[1] != dw:
-            from PIL import Image as _PILImage
-            rgb = np.array(_PILImage.fromarray(rgb).resize((dw, dh), _PILImage.BILINEAR))
-        raw_intrinsic = batch['head_intrinsic'][idx]
-        if torch.is_tensor(raw_intrinsic) and raw_intrinsic.shape == (3, 3):
-            cam_intrinsic = {
-                'fx': raw_intrinsic[0, 0].item(), 'fy': raw_intrinsic[1, 1].item(),
-                'ppx': raw_intrinsic[0, 2].item(), 'ppy': raw_intrinsic[1, 2].item(),
-                'cx': raw_intrinsic[0, 2].item(), 'cy': raw_intrinsic[1, 2].item(),
-                'z_min': 0.05, 'z_max': 10.0,  # wide range for robot scenes
-            }
-        else:
-            cam_intrinsic = raw_intrinsic
-            cam_intrinsic['cx'] = cam_intrinsic['ppx']; cam_intrinsic['cy'] = cam_intrinsic['ppy']
-            cam_intrinsic.setdefault('z_min', 0.05)
-            cam_intrinsic.setdefault('z_max', 10.0)
-
-        def _get_r0(pred_masks, image, depth, fx, fy, cx, cy):
-            # Resize mask to depth spatial dims so indices are in-bounds for depth lookup
-            depth_hw = depth.shape[-2], depth.shape[-1]
-            resized_mask = F.interpolate(pred_masks.unsqueeze(0), size=depth_hw, mode="nearest")[0, 0]
-
-            mask_np = (resized_mask > 0.5).numpy().astype(np.uint8)
-            if mask_np.sum() == 0:
-                return None
-
-            # Pole of inaccessibility: deepest in-mask pixel (argmax of distance transform).
-            # Always lies inside the mask, even for concave / disconnected shapes.
-            dist = cv2.distanceTransform(mask_np, cv2.DIST_L2, 5)
-            y_center, x_center = (int(c) for c in np.unravel_index(int(dist.argmax()), dist.shape))
-
-            z = depth.squeeze(0)[y_center, x_center]
-            if z <= 0 or not np.isfinite(z):
-                return None
-            if float(z) > 100.0:
-                z = z / 1000.0
-
-            point_3d = np.array([(x_center - cx) * z / fx, (y_center - cy) * z / fy, z])
-            return point_3d
-        spline_params = {"r0": None, "ctrl": None}
-
-
-        idx = 0
-
-        md = pred_results.get("motion_directions")
-        if md is None or md.shape[0] == 0:
-            return {}
-        r0 = _get_r0(pred_results["masks"][idx].detach().cpu(), x, depth, cam_intrinsic['fx'], cam_intrinsic['fy'], cam_intrinsic['cx'], cam_intrinsic['cy'])
-        spline_params['r0'] = r0
-        # pred_results["motion_directions"] is (K, 3*num_predicted_ctrl); take first prediction
-        spline_params['ctrl'] = md[0].detach().cpu()
-        r_curve, R_curve = compute_spline_curve(spline_params)
-        fig_pred = plotly_pointcloud_and_curve(depth.squeeze(0), rgb, cam_intrinsic=cam_intrinsic, r_curve=r_curve, R_curve=R_curve)
-
-        # GT may be either Bezier ctrl (D,) or pre-sampled curve (T, 3); dispatch by ndim.
-        gt_motion = batch['find_target'].motion_directions[idx].detach().cpu()
-        r0_gt = _get_r0(gt_results["masks"][idx].detach().cpu(), x, depth, cam_intrinsic['fx'], cam_intrinsic['fy'], cam_intrinsic['cx'], cam_intrinsic['cy'])
-        if gt_motion.ndim == 2 and gt_motion.shape[-1] == 3:
-            r_curve_gt, R_curve_gt = _curve_frames_from_points(gt_motion.to(torch.float64), r0_gt)
-        else:
-            spline_params_gt = {"r0": r0_gt, "ctrl": gt_motion}
-            r_curve_gt, R_curve_gt = compute_spline_curve(spline_params_gt)
-        fig_gt = plotly_pointcloud_and_curve(depth.squeeze(0), rgb, cam_intrinsic=cam_intrinsic, r_curve=r_curve_gt, R_curve=R_curve_gt)
-
-
-        wandb_images = {
-            "pointcloud_and_spline_curve_pred": wandb.Plotly(fig_pred),
-            "pointcloud_and_spline_curve_gt": wandb.Plotly(fig_gt),
-        }
-
-        return wandb_images

@@ -1,0 +1,12 @@
+_target_: src.data.visual_genome.VisualGenomeDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+
+data_dir: ${paths.data_roots.visual_genome}
+annotation_file: region_descriptions.json
+max_samples: null
+strict: true
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008

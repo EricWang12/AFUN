@@ -1,10 +1,7 @@
 # src/models/encoder/sonata_wrapper.py
 from __future__ import annotations
-from typing import Any, Optional
 import torch
 from torch import nn
-from omegaconf import OmegaConf
-from yacs.config import CfgNode as CN
 import numpy as np
 
 from .base import EncoderBase
@@ -73,7 +70,6 @@ def format_point2(transform, point: torch.Tensor):
     normal = point[:, :, 6:9]   # (B, N, 3)
     
     
-    # pt = self.transform(self.format_point(coords[0:1], rgb[0:1], normal[0:1], use_numpy=False))
     point = [ transform(format_point(coords[i:i+1], rgb[i:i+1], normal[i:i+1], use_numpy=False)) for i in range(point.shape[0])]
     point = sonata.data.collate_fn(point)
     return point
@@ -132,7 +128,6 @@ class SonataWrapper(EncoderBase):
         # point: (B, N, 9)
         point = format_point2(self.transform, point)
         
-        # point = self.transform(point)
         for key in point.keys():
             if isinstance(point[key], torch.Tensor):
                 point[key] = point[key].cuda(non_blocking=True)

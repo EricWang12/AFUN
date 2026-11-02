@@ -1,0 +1,12 @@
+# Inference with a checkpoint trained by train_stage3.yaml, which uses the paper's
+# 6-layer motion head. The released afun.pt has 4 layers; use inference.yaml for it.
+#     python demo.py --ckpt <run>/model_step_20000.pt --config inference_stage3 ...
+
+defaults:
+  - inference
+  - _self_
+
+decoder:
+  motion_processor:
+    model_cfg:
+      num_layers: 6

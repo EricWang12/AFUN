@@ -15,11 +15,11 @@
 from typing import List
 import numpy as np
 import torch
-# NOTE (AFUN-inference patch): `evo` is only needed for multi-view pose
-# alignment (align_poses_umeyama -> _umeyama_sim3_from_paths). Single-image
-# depth inference never reaches that code path. The affu3-cu130 env does not
-# ship `evo`, so we import it lazily inside the function that uses it instead
-# of at module load — this lets `depth_anything_3.api` import cleanly for
+# NOTE (AFUN patch): `evo` is only needed for multi-view pose alignment
+# (align_poses_umeyama -> _umeyama_sim3_from_paths). Single-image depth
+# inference never reaches that code path, and `evo` is not in AFUN's
+# requirements, so we import it lazily inside the function that uses it rather
+# than at module load — this lets `depth_anything_3.api` import cleanly for
 # single-image depth generation. See extern/README.md.
 
 from depth_anything_3.utils.geometry import affine_inverse, affine_inverse_np

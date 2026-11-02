@@ -1,0 +1,18 @@
+# @package data
+_target_: src.data.ragnet.RAGNetDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+data_dir: ${paths.data_roots.ragnet}
+# Records with a task instruction: egoobjects + handal reasoning, openx (37,538 samples).
+# graspnet_train.pkl and rlbench_train.pkl only name the object class and are not used.
+source: [egoobjects, openx, handal]
+split: train
+reasoning: [easy, hard]
+ann_file: null
+strict: true
+mask_threshold: 0.5
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008
+    normalize_image: true

@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from ..model_base import ModelBase
 import numpy as np
-from typing import Dict, Any
+from typing import Dict
 
 class DecoderBase(ModelBase, ABC):
     projection: nn.Module = torch.nn.Identity()
@@ -15,10 +15,6 @@ class DecoderBase(ModelBase, ABC):
         super().__init__(freeze)
         self.apply_freeze()
     
-    # """Raw input -> continuous features."""
-    # @abstractmethod
-    # def encode(self, raw: Any, **kwargs) -> torch.Tensor:
-    #     raise NotImplementedError("Subclasses must implement encode")
 
     @abstractmethod
     def load_model(self, ckpt_path: str = None, device: str = "cuda", **kwargs):
@@ -43,7 +39,6 @@ class DecoderBase(ModelBase, ABC):
         """
         raise NotImplementedError("Subclasses must implement forward")
     
-    # @abstractmethod
     def make_wandb_vis(self, batch: Dict[str, Any], model_outputs: Dict[str, Any], *, step: int):
         """
         Make visualization for WandB.

@@ -1,0 +1,33 @@
+defaults:
+  - paths
+  - model/decoder@decoder: sam3_decoder_sonata_geo
+  - model/llm@llm: qwen3_vl_8B
+  - model/decoder/loss@decoder.loss: sam3_loss
+  - data: combined
+  - train: trainer
+  - _self_
+
+stage: 3
+seed: 354
+model_name: afun-stage3
+rms_norm: false
+
+train:
+  batch_size: 24
+  ckpt_path: checkpoints/afun_stage2.pt
+  training_cfg:
+    max_steps: 20000
+
+decoder:
+  predict_motion: true
+  model_cfg:
+    sam_loss_weight: 0.5
+  motion_processor:
+    model_cfg:
+      num_layers: 6
+    loss_cfg:
+      weight: 100.0
+
+hydra:
+  run:
+    dir: ${paths.output}/${model_name}/${now:%Y-%m-%d_%H-%M-%S}

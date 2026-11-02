@@ -1,9 +1,27 @@
 # @package data
-# Stub — the inference path never instantiates a dataset/dataloader.
-# Kept only because the chosen config's `defaults:` chain composes it.
-data_dir: null
+_target_: src.data.robot.RobotDataset
+defaults:
+  - default@loader_cfg: loader
+  - _self_
+data_dir: ${paths.data_roots.robot}
 subset: null
+split: train
 split_file: null
-split: ""
-dataset_cfg: {}
-loader_cfg: {}
+strict: true
+max_samples: null
+dataset_cfg:
+  motion_type: curve_samples
+  traj_file_name: trajectory.json
+  min_area: 200
+  match_lambda_2d: 0.5
+  match_cost_abort_frac_of_diag: 0.4
+  curve_T: 16
+loader_cfg:
+  collate_cfg:
+    image_resolution: 1008
+    normalize_image: true
+    connectivity: 8
+    min_area: 1
+    sort_by_area_desc: true
+    is_exhaustive: true
+    only_one_object: false

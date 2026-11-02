@@ -1,0 +1,8 @@
+defaults:
+  - model/decoder@decoder: sam3_decoder
+  - model/llm@llm: qwen3_vl_8B
+  - _self_
+rms_norm: false
+decoder:
+  training: false
+  predict_motion: false

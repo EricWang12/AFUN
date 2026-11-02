@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = ["extern", "src/models/decoder/sam3", "src/models/encoder/sonata"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]

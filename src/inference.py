@@ -34,12 +34,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hydra import compose, initialize_config_dir
-from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from src.models.end_to_end import EndToEndModel
-from src.utils.misc import update_cfg
-from src.models.decoder.motion_decoder.FSFrame import (
+from src.models.decoder.motion_decoder.curves import (
     tensor_to_fsparams,
     compute_fsframe_curve,
     compute_spline_curve,
@@ -145,85 +143,19 @@ def _compute_motion_curve(result: dict) -> np.ndarray | None:
 # ──────────────────────────────────────────────────────────────────────
 # Model loading
 # ──────────────────────────────────────────────────────────────────────
-def load_model(
-    ckpt_path: str,
-    config_name: str = "inference",
-    device: str = "cuda",
-    cfg_dir: str | None = None,
-    config_path: str | None = None,
-) -> EndToEndModel:
-    """Build an EndToEndModel from a Hydra config and load checkpoint weights.
+def load_model(ckpt_path, config_name="inference", device="cuda", cfg_dir=None, config_path=None):
+    """Load learned weights with the same model builder used for training."""
+    from src.models.build import build_model
+    from src.utils.checkpoint import load_weights
 
-    Parameters
-    ----------
-    ckpt_path : str
-        Path to ``model_step_XXXX.pt``.
-    config_name : str
-        Name of the Hydra config under *cfg_dir* (without ``.yaml``).
-    device : str
-        ``"cuda"`` or ``"cuda:0"`` or ``"cpu"``.
-    cfg_dir : str | None
-        Path to the config directory. Defaults to ``<project>/configs``.
-    config_path : str | None
-        Direct path to a fully-composed config file (e.g. the ``.hydra/config.yaml``
-        saved alongside a training run). When provided, overrides *config_name*
-        / *cfg_dir* and loads the file as-is via :func:`OmegaConf.load`, so the
-        model matches exactly what was trained.
-    """
-    if config_path is not None:
+    if config_path:
         cfg = OmegaConf.load(config_path)
-        # An externally-saved Hydra config (e.g. a training run's .hydra/config.yaml)
-        # may hard-code absolute paths from the machine it was trained on. Override
-        # workspace + project to the local repo root so any ${paths.*} interpolations
-        # resolve to files that exist here.
-        if "paths" in cfg:
-            OmegaConf.set_struct(cfg.paths, False)
-            cfg.paths.workspace = str(ROOT)
-            cfg.paths.project = str(ROOT)
     else:
-        if cfg_dir is None:
-            cfg_dir = str(ROOT / "configs")
-
-        with initialize_config_dir(version_base=None, config_dir=cfg_dir):
+        with initialize_config_dir(version_base="1.3", config_dir=str(pathlib.Path(cfg_dir or ROOT / "configs").resolve())):
             cfg = compose(config_name=config_name)
-
-    # Strip Hydra residue so instantiate() works outside a Hydra app
-    for k in ("encoder", "llm", "decoder"):
-        if k in cfg and "hydra" in cfg[k]:
-            OmegaConf.set_struct(cfg[k], False)
-            del cfg[k]["hydra"]
-
-    # Encoder disabled for image-only inference
-    encoder = None
-
-    llm = instantiate(cfg.llm)
-
-    # Propagate LLM hidden size into the decoder config
-    if "model_cfg" in cfg.decoder:
-        cfg.decoder.model_cfg = update_cfg(
-            cfg.decoder.model_cfg, "cond_dim", llm.llm_hidden_size
-        )
-    elif "pf_cfg" in cfg.decoder:
-        cfg.decoder.pf_cfg = update_cfg(
-            cfg.decoder.pf_cfg, "cond_dim", llm.llm_hidden_size
-        )
-
-    decoder = instantiate(cfg.decoder)
-
-    model = EndToEndModel(
-        encoder=encoder,
-        llm=llm,
-        decoder=decoder,
-        rms_norm=cfg.get("rms_norm", False),
-    )
-
-    # Load checkpoint (strict=False: frozen SAM3 backbone keys are loaded separately)
-    ckpt = torch.load(ckpt_path, map_location=device)
-    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
-    print(f"Checkpoint loaded.")
-
-    model.eval().to(device)
-    return model
+    model = build_model(cfg, device, evaluation=True)
+    load_weights(model, ckpt_path)
+    return model.eval().to(device)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -311,7 +243,7 @@ def infer_image(
             depth_np = np.asarray(depth)
 
     # ── 1. LLM forward → metaquery embeddings ──
-    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+    with torch.autocast(torch.device(device).type, dtype=torch.bfloat16, enabled=torch.device(device).type == "cuda"):
         inputs_mq = model.llm.tokenize([query], image=image_tensor)
         llm_kwargs = dict(
             input_ids=inputs_mq["input_ids"].to(device),
@@ -333,9 +265,9 @@ def infer_image(
         motion_embeds = mq_embeds
 
     # ── 2. Decoder → segmentation ──
-    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+    with torch.autocast(torch.device(device).type, dtype=torch.bfloat16, enabled=torch.device(device).type == "cuda"):
         sam3_out, _ = model.decoder(
-            images=image_tensor,
+            images=image_tensor * 2 - 1,
             feature=semantic_embeds,
             motion_feature=motion_embeds,
             find_target=None,
@@ -366,12 +298,17 @@ def infer_image(
                  [0.0, 0.0, 1.0]],
                 dtype=torch.float32, device=device,
             ).unsqueeze(0)  # (1, 3, 3) at depth resolution
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            # Match the training collator's depth grid and intrinsic scaling.
+            old_h, old_w = depth_t.shape[-2:]
+            depth_t = F.interpolate(depth_t, size=(480, 640), mode="bilinear", align_corners=False)
+            intrinsic_t[:, 0] *= 640 / old_w
+            intrinsic_t[:, 1] *= 480 / old_h
+            with torch.autocast(torch.device(device).type, dtype=torch.bfloat16, enabled=torch.device(device).type == "cuda"):
                 geo_tokens, geo_shape = depth_encoder(
-                    image_tensor, depth_t, intrinsic=intrinsic_t,
+                    image_tensor * 2 - 1, depth_t, intrinsic=intrinsic_t,
                 )
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast(torch.device(device).type, dtype=torch.bfloat16, enabled=torch.device(device).type == "cuda"):
             motion_pred = model.decoder.motion_processor(
                 sam3_out["queries"],
                 motion_embeds,

@@ -2,10 +2,9 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 import torch
-from torch import nn
 
 from ..model_base import ModelBase
-from transformers import PretrainedConfig, PreTrainedModel, AutoProcessor
+from transformers import PreTrainedModel, AutoProcessor
 
 
 class LLMBase(ModelBase, ABC):
